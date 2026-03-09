@@ -6,6 +6,7 @@ lv_indev_t *InputDriver::pointer = nullptr;
 lv_indev_t *InputDriver::encoder = nullptr;
 lv_indev_t *InputDriver::button = nullptr;
 lv_group_t *InputDriver::inputGroup = nullptr;
+bool InputDriver::modSymActive = false;
 
 InputDriver *InputDriver::instance(void)
 {

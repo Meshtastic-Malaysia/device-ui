@@ -53,6 +53,7 @@ class InputDriver
     static lv_indev_t *encoder;
     static lv_indev_t *button;
     static lv_group_t *inputGroup;
+    static bool modSymActive;
 
     // used for linux hot plugging and unplugging
     std::string keyboardDevice; // current keyboard device string in use

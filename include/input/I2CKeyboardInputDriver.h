@@ -86,6 +86,9 @@ class TLoraPagerKeyboardInputDriver : public TCA8418KeyboardInputDriver
     void readKeyboard(uint8_t address, lv_indev_t *indev, lv_indev_data_t *data) override;
     virtual ~TLoraPagerKeyboardInputDriver(void) {}
 
+private:
+    uint8_t kbAddress = 0;
+    uint8_t kbBlStep = 0;
 };
 
 class TDeckProKeyboardInputDriver : public TCA8418KeyboardInputDriver

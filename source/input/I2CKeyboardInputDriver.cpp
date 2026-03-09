@@ -128,7 +128,6 @@ void I2CKeyboardInputDriver::stepBacklight()
     setKeyboardBacklight(kbBlSteps[kbBlStep]);
 }
 
-
 void I2CKeyboardInputDriver::keyboard_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
     // Read from all registered keyboards
@@ -224,23 +223,170 @@ void TCA8418KeyboardInputDriver::readKeyboard(uint8_t address, lv_indev_t *indev
 
 // ---------- TLoraPagerKeyboardInputDriver Implementation ----------
 
+#define TLORA_BL_TOGGLE_KEY 0x01
+
+static bool tloraShiftHeld = false;
+static bool tloraSymHeld   = false;
+
 TLoraPagerKeyboardInputDriver::TLoraPagerKeyboardInputDriver(uint8_t address) : TCA8418KeyboardInputDriver()
 {
+    kbAddress = address;
     registerI2CKeyboard(this, "TLora Pager Keyboard", address);
 }
 
 void TLoraPagerKeyboardInputDriver::init(void)
 {
-    // Additional initialization for TLora-Pager if needed
+    driver = this; // register as the InputDriver singleton for indev management
+    initKeyboardBacklight(KB_BL_PIN);
     TCA8418KeyboardInputDriver::init();
+
+    // Initialise TCA8418 hardware so it populates the key-event FIFO.
+    // This is required when Meshtastic's cardKbI2cImpl is not active (e.g.
+    // when displaymode == COLOR), because nothing else configures the chip.
+    uint8_t addr = kbAddress;
+    tca8418WriteReg(addr, TCA8418_REG_GPIO_DIR_1,     0x00); // all GPIO → input
+    tca8418WriteReg(addr, TCA8418_REG_GPIO_DIR_2,     0x00);
+    tca8418WriteReg(addr, TCA8418_REG_GPIO_DIR_3,     0x00);
+    tca8418WriteReg(addr, TCA8418_REG_GPI_EM_1,       0xFF); // add all pins to key events
+    tca8418WriteReg(addr, TCA8418_REG_GPI_EM_2,       0xFF);
+    tca8418WriteReg(addr, TCA8418_REG_GPI_EM_3,       0xFF);
+    tca8418WriteReg(addr, TCA8418_REG_GPIO_INT_LVL_1, 0x00); // falling-edge interrupts
+    tca8418WriteReg(addr, TCA8418_REG_GPIO_INT_LVL_2, 0x00);
+    tca8418WriteReg(addr, TCA8418_REG_GPIO_INT_LVL_3, 0x00);
+    tca8418WriteReg(addr, TCA8418_REG_GPIO_INT_EN_1,  0xFF); // enable interrupts for all pins
+    tca8418WriteReg(addr, TCA8418_REG_GPIO_INT_EN_2,  0xFF);
+    tca8418WriteReg(addr, TCA8418_REG_GPIO_INT_EN_3,  0xFF);
+    tca8418WriteReg(addr, TCA8418_REG_DEBOUNCE_DIS_1, 0x00); // enable debounce
+    tca8418WriteReg(addr, TCA8418_REG_DEBOUNCE_DIS_2, 0x00);
+    tca8418WriteReg(addr, TCA8418_REG_DEBOUNCE_DIS_3, 0x00);
+    // Key matrix: 4 rows (R0-R3), 10 columns (C0-C9)
+    tca8418WriteReg(addr, TCA8418_REG_KP_GPIO_1, 0x0F); // rows 0-3
+    tca8418WriteReg(addr, TCA8418_REG_KP_GPIO_2, 0xFF); // cols 0-7
+    tca8418WriteReg(addr, TCA8418_REG_KP_GPIO_3, 0x03); // cols 8-9
+    // Flush any stale events and clear interrupt status
+    while (tca8418ReadReg(addr, TCA8418_REG_KEY_LCK_EC) & 0x0F)
+        tca8418ReadReg(addr, TCA8418_REG_KEY_EVENT_A);
+    tca8418WriteReg(addr, TCA8418_REG_INT_STAT, 0x03);
+    // Enable key-event interrupt (KE_IEN) so the FIFO is populated on key press
+    uint8_t cfg = tca8418ReadReg(addr, TCA8418_REG_CFG);
+    cfg |= 0x01;
+    tca8418WriteReg(addr, TCA8418_REG_CFG, cfg);
+    ILOG_INFO("TLora Pager: TCA8418 hardware init done (CFG=0x%02X)", cfg);
 }
+
+// T-Pager keyboard layout: 4×10 matrix with 31 usable keys
+// Key mapping from TCA8418 key codes to characters [normal, shift, sym]
+static const char TLoraPagerKeyMap[31][3] = {
+    {'q', 'Q', '1'}, {'w', 'W', '2'}, {'e', 'E', '3'}, {'r', 'R', '4'}, {'t', 'T', '5'},
+    {'y', 'Y', '6'}, {'u', 'U', '7'}, {'i', 'I', '8'}, {'o', 'O', '9'}, {'p', 'P', '0'},
+    {'a', 'A', '*'}, {'s', 'S', '/'}, {'d', 'D', '+'}, {'f', 'F', '-'}, {'g', 'G', '='},
+    {'h', 'H', ':'}, {'j', 'J', '\''},  {'k', 'K', '"'}, {'l', 'L', '@'},
+    {0x0D, 0x09, 0x0D}, // Key 20: Enter / Tab (shift) / Enter (sym)
+    {0,    0,    0   }, // Key 21: Sym modifier
+    {'z', 'Z', '_'}, {'x', 'X', '$'}, {'c', 'C', ';'},
+    {'v', 'V', '?'}, {'b', 'B', '!'}, {'n', 'N', ','}, {'m', 'M', '.'},
+    {0,    0,    0   }, // Key 29: Shift modifier
+    {0x08, 0x08, 0x1B}, // Key 30: Backspace / Backspace (shift) / ESC (sym)
+    {' ', ' ', TLORA_BL_TOGGLE_KEY}  // Key 31: Space / Space (shift) / KB backlight toggle (sym)
+};
+
+static const uint8_t TLORA_MODIFIER_SYM_IDX   = 20; // 0-based index of Sym key
+static const uint8_t TLORA_MODIFIER_SHIFT_IDX = 28; // 0-based index of Shift key
+
 
 void TLoraPagerKeyboardInputDriver::readKeyboard(uint8_t address, lv_indev_t *indev, lv_indev_data_t *data)
 {
-    // TODO
-    char keyValue = 0;
     data->state = LV_INDEV_STATE_RELEASED;
-    data->key = (uint32_t)keyValue;
+    data->key = 0;
+
+    // Read key count from KEY_LCK_EC register (bits 0-3)
+    Wire.beginTransmission(address);
+    Wire.write(TCA8418_REG_KEY_LCK_EC);
+    Wire.endTransmission();
+    Wire.requestFrom(address, (uint8_t)1);
+    if (!Wire.available())
+        return;
+    uint8_t keyCount = Wire.read() & 0x0F;
+    if (keyCount == 0)
+        return;
+
+    // Read one key event from FIFO
+    Wire.beginTransmission(address);
+    Wire.write(TCA8418_REG_KEY_EVENT_A);
+    Wire.endTransmission();
+    Wire.requestFrom(address, (uint8_t)1);
+    if (!Wire.available())
+        return;
+
+    uint8_t keyEvent = Wire.read();
+    uint8_t keyCode  = keyEvent & 0x7F;
+    bool pressed     = (keyEvent & 0x80) != 0;
+
+    if (keyCode == 0 || keyCode > 31)
+        return;
+
+    uint8_t keyIndex = keyCode - 1;
+
+    // Modifier keys update held state on both press and release; no key output.
+    if (keyIndex == TLORA_MODIFIER_SHIFT_IDX) {
+        tloraShiftHeld = pressed;
+        ILOG_DEBUG("T-Pager: Shift %s", pressed ? "held" : "released");
+        return;
+    }
+    if (keyIndex == TLORA_MODIFIER_SYM_IDX) {
+        tloraSymHeld = pressed;
+        InputDriver::modSymActive = pressed;
+        ILOG_DEBUG("T-Pager: Sym %s", pressed ? "held" : "released");
+        return;
+    }
+
+    if (!pressed)
+        return;
+
+    uint8_t modUsed = tloraSymHeld ? 2 : (tloraShiftHeld ? 1 : 0);
+    char keyChar = TLoraPagerKeyMap[keyIndex][modUsed];
+
+    // Only Space wakes the display; other keys are ignored while the display
+    // sleeps to prevent inadvertent activation. sym+Space resolves to the
+    // backlight-toggle sentinel rather than ' ', so it does not wake either.
+    if (keyChar == ' ')
+        DisplayDriver::requestWake();
+
+    if (keyChar == TLORA_BL_TOGGLE_KEY) {
+        static const uint8_t kbBlSteps[] = {0, 40, 127, 255};
+        static const uint8_t kbBlStepCount = sizeof(kbBlSteps) / sizeof(kbBlSteps[0]);
+        kbBlStep = (kbBlStep + 1) % kbBlStepCount;
+        setKeyboardBacklight(kbBlSteps[kbBlStep]);
+        return;
+    }
+
+    if (keyChar == 0)
+        return;
+
+    data->state = LV_INDEV_STATE_PRESSED;
+    switch (keyChar) {
+    case 0x0D: data->key = LV_KEY_ENTER;     break;
+    case 0x09: data->key = LV_KEY_NEXT;      break;
+    case 0x1B: data->key = LV_KEY_ESC;       break;
+    case 0x08: {
+        lv_obj_t *focused = lv_group_get_focused(lv_group_get_default());
+        if (focused && lv_obj_check_type(focused, &lv_textarea_class)) {
+            data->key = LV_KEY_BACKSPACE;
+        } else if (focused && lv_obj_get_class(focused) == &lv_obj_class) {
+            // Plain lv_obj focused (e.g. an overlay panel) — send ESC so it can handle dismissal
+            data->key = LV_KEY_ESC;
+        } else if (navigateHomeCallback) {
+            navigateHomeCallback();
+            data->state = LV_INDEV_STATE_RELEASED;
+            return;
+        } else {
+            data->key = LV_KEY_ESC;
+        }
+        break;
+    }
+    default:   data->key = (uint32_t)keyChar; break;
+    }
+    ILOG_DEBUG("T-Pager key: code=%d mod=%d char=0x%02X lvkey=%d", keyCode, modUsed, keyChar, data->key);
 }
 
 // ---------- TDeckProKeyboardInputDriver Implementation ----------
