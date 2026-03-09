@@ -47,6 +47,11 @@ class TCA8418KeyboardInputDriver : public I2CKeyboardInputDriver
     void init(void) override;
     void readKeyboard(uint8_t address, lv_indev_t *indev, lv_indev_data_t *data) override;
     virtual ~TCA8418KeyboardInputDriver(void) {}
+
+  protected:
+    // Protected default constructor for subclasses: skips self-registration so
+    // the derived class can register under its own name without double-registering.
+    TCA8418KeyboardInputDriver(void) {}
 };
 
 class TLoraPagerKeyboardInputDriver : public TCA8418KeyboardInputDriver
