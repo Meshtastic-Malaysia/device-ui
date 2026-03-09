@@ -205,10 +205,15 @@ class TFTView_320x240 : public MeshtasticView
   private:
     // view creation only via ViewFactory
     friend class ViewFactory;
+    friend class TFTView_480x222;
     static TFTView_320x240 *instance(void);
     static TFTView_320x240 *instance(const DisplayDriverConfig &cfg);
     TFTView_320x240();
+
+  protected:
     TFTView_320x240(const DisplayDriverConfig *cfg, DisplayDriver *driver);
+
+  private:
 
     void enterProgrammingMode(void);
     void updateTheme(void);
