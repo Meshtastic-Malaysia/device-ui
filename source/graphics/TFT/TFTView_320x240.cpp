@@ -135,6 +135,20 @@ TFTView_320x240 *TFTView_320x240::instance(const DisplayDriverConfig &cfg)
     return gui;
 }
 
+// Returns true if the event should dismiss an overlay panel: any click, or a
+// key press of ESC, Backspace, or Enter. Centralises the key set so all
+// dismiss handlers stay in sync.
+static bool isDismissEvent(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_CLICKED) return true;
+    if (code == LV_EVENT_KEY) {
+        uint32_t key = lv_event_get_key(e);
+        return key == LV_KEY_ESC || key == LV_KEY_BACKSPACE;
+    }
+    return false;
+}
+
 TFTView_320x240::TFTView_320x240(const DisplayDriverConfig *cfg, DisplayDriver *driver)
     : MeshtasticView(cfg, driver, new ViewController), screensInitialised(false), nodesFiltered(0), nodesChanged(true),
       processingFilter(false), packetLogEnabled(false), detectorRunning(false), cardDetected(false), formatSD(false),
@@ -725,6 +739,12 @@ void TFTView_320x240::ui_events_init(void)
     lv_obj_add_event_cb(objects.home_memory_button, this->ui_event_MemoryButton, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(objects.home_qr_button, this->ui_event_QrButton, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(objects.home_cancel_qr_button, this->ui_event_CancelQrButton, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(objects.home_show_qr_panel, this->ui_event_CancelQrButton, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(objects.home_show_qr_panel, this->ui_event_CancelQrButton, LV_EVENT_KEY, NULL);
+    // Add to default group so encoder/keyboard can focus and dismiss it
+    lv_group_t *qr_group = lv_group_get_default();
+    if (qr_group)
+        lv_group_add_obj(qr_group, objects.home_show_qr_panel);
 
     // node and channel buttons
     lv_obj_add_event_cb(objects.node_button, ui_event_NodeButton, LV_EVENT_ALL, (void *)ownNode);
@@ -741,10 +761,16 @@ void TFTView_320x240::ui_events_init(void)
 
     // message popup
     lv_obj_add_event_cb(objects.msg_popup_button, this->ui_event_MsgPopupButton, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(objects.msg_popup_button, this->ui_event_MsgPopupButton, LV_EVENT_KEY, NULL);
     lv_obj_add_event_cb(objects.msg_popup_panel, this->ui_event_MsgPopupButton, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(objects.msg_restore_button, this->ui_event_MsgRestoreButton, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(objects.msg_restore_panel, this->ui_event_MsgRestoreButton, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(objects.alert_panel, this->ui_event_AlertButton, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(objects.alert_panel, this->ui_event_AlertButton, LV_EVENT_KEY, NULL);
+    // Add to default group so encoder/keyboard can focus and dismiss it
+    lv_group_t *alert_group = lv_group_get_default();
+    if (alert_group)
+        lv_group_add_obj(alert_group, objects.alert_panel);
 
     // keyboard
     lv_obj_add_event_cb(objects.keyboard, ui_event_Keyboard, LV_EVENT_CLICKED, this);
@@ -851,6 +877,12 @@ void TFTView_320x240::ui_events_init(void)
     // generate PSK
     lv_obj_add_event_cb(objects.settings_modify_channel_key_generate_button, ui_event_generate_psk, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(objects.settings_modify_channel_qr_button, ui_event_qr_code, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(objects.settings_modify_channel_qr_panel, ui_event_qr_code, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(objects.settings_modify_channel_qr_panel, ui_event_qr_code, LV_EVENT_KEY, NULL);
+    // Add to default group so encoder/keyboard can focus and dismiss it
+    lv_group_t *ch_qr_group = lv_group_get_default();
+    if (ch_qr_group)
+        lv_group_add_obj(ch_qr_group, objects.settings_modify_channel_qr_panel);
 
     // screen
     lv_obj_add_event_cb(objects.calibration_screen, ui_event_calibration_screen_loaded, LV_EVENT_SCREEN_LOADED, (void *)7);
@@ -1267,7 +1299,15 @@ void TFTView_320x240::ui_event_MsgPopupButton(lv_event_t *e)
     lv_obj_t *target = lv_event_get_target_obj(e);
     if (target == objects.msg_popup_panel) {
         THIS->hideMessagePopup();
-    } else { // msg button was clicked
+    } else { // msg_popup_button: ESC/Backspace dismisses, Enter/click navigates
+        if (lv_event_get_code(e) == LV_EVENT_KEY) {
+            uint32_t key = lv_event_get_key(e);
+            if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) {
+                THIS->hideMessagePopup();
+                return;
+            }
+            if (key != LV_KEY_ENTER) return;
+        }
         uint32_t channelOrNode = (unsigned long)objects.msg_popup_button->user_data;
         if (channelOrNode < c_max_channels) {
             uint8_t ch = (uint8_t)channelOrNode;
@@ -1303,6 +1343,7 @@ void TFTView_320x240::ui_event_EnvelopeButton(lv_event_t *e)
 
 void TFTView_320x240::ui_event_AlertButton(lv_event_t *e)
 {
+    if (!isDismissEvent(e)) return;
     lv_obj_add_flag(objects.alert_panel, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1544,10 +1585,12 @@ void TFTView_320x240::ui_event_QrButton(lv_event_t *e)
     std::string qr = "https://meshtastic.org/v/#" + base64Https;
     lv_obj_remove_flag(objects.home_show_qr_panel, LV_OBJ_FLAG_HIDDEN);
     THIS->qr = THIS->showQrCode(objects.home_show_qr_panel, qr.c_str());
+    lv_group_focus_obj(objects.home_show_qr_panel);
 }
 
 void TFTView_320x240::ui_event_CancelQrButton(lv_event_t *e)
 {
+    if (!isDismissEvent(e)) return;
     lv_obj_add_flag(objects.home_show_qr_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_delete(THIS->qr);
     THIS->qr = nullptr;
@@ -2189,10 +2232,12 @@ void TFTView_320x240::ui_event_generate_psk(lv_event_t *e)
     THIS->qr = THIS->showQrCode(objects.settings_modify_channel_qr_panel, qr.c_str());
     lv_obj_add_state(objects.keyboard_button_3, LV_STATE_DISABLED);
     lv_obj_add_state(objects.keyboard_button_4, LV_STATE_DISABLED);
+    lv_group_focus_obj(objects.settings_modify_channel_qr_panel);
 }
 
 void TFTView_320x240::ui_event_qr_code(lv_event_t *e)
 {
+    if (!isDismissEvent(e)) return;
     lv_obj_remove_state(objects.keyboard_button_3, LV_STATE_DISABLED);
     lv_obj_remove_state(objects.keyboard_button_4, LV_STATE_DISABLED);
     lv_obj_add_flag(objects.settings_modify_channel_qr_panel, LV_OBJ_FLAG_HIDDEN);
@@ -5648,10 +5693,14 @@ bool TFTView_320x240::applyNodesFilter(uint32_t nodeNum, bool reset)
 void TFTView_320x240::messageAlert(const char *alert, bool show)
 {
     lv_label_set_text(objects.alert_label, alert);
-    if (show)
+    if (show) {
         lv_obj_clear_flag(objects.alert_panel, LV_OBJ_FLAG_HIDDEN);
-    else
+        lv_group_t *group = lv_group_get_default();
+        if (group)
+            lv_group_focus_obj(objects.alert_panel);
+    } else {
         lv_obj_add_flag(objects.alert_panel, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 /**
