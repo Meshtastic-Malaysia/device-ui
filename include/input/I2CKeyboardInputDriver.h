@@ -5,6 +5,9 @@
 #include <memory>
 #include <string>
 
+// Callback type for navigation events (e.g., backspace -> focus home button)
+typedef void (*NavigationCallback)(void);
+
 class I2CKeyboardInputDriver : public InputDriver
 {
   public:
@@ -23,13 +26,34 @@ class I2CKeyboardInputDriver : public InputDriver
     using KeyboardList = std::list<std::unique_ptr<KeyboardDefinition>>;
     static KeyboardList &getI2CKeyboardList(void) { return i2cKeyboardList; }
 
+    // Navigation callback for backspace when not in a text field
+    static void setNavigateHomeCallback(NavigationCallback cb) { navigateHomeCallback = cb; }
+
   protected:
     bool registerI2CKeyboard(I2CKeyboardInputDriver *driver, std::string name, uint8_t address);
+    void initKeyboardBacklight(uint8_t pin, uint8_t channel = 4);
+    void setKeyboardBacklight(uint8_t brightness);
+    // Step-based backlight cycling. Call initBacklightSteps() from the subclass
+    // init() after initKeyboardBacklight() to register the device's brightness
+    // levels and apply the initial level. Call stepBacklight() to advance one step.
+    // If the current step index is out of range it is clamped to the last step,
+    // so a future-persisted value never leaves the backlight off unexpectedly.
+    void initBacklightSteps(const uint8_t *steps, uint8_t count);
+    void stepBacklight();
+    uint8_t kbBlBrightness = 0;
+    uint8_t kbBlSavedBrightness = 0;
+
+    static NavigationCallback navigateHomeCallback;
 
   private:
     static void keyboard_read(lv_indev_t *indev, lv_indev_data_t *data);
 
     static KeyboardList i2cKeyboardList; // list of registered I2C keyboards
+    uint8_t kbBlPin = 0;
+    uint8_t kbBlChannel = 4;
+    const uint8_t *kbBlSteps = nullptr;
+    uint8_t kbBlStepCount = 0;
+    uint8_t kbBlStep = 0;
 };
 
 class TDeckKeyboardInputDriver : public I2CKeyboardInputDriver
@@ -61,6 +85,7 @@ class TLoraPagerKeyboardInputDriver : public TCA8418KeyboardInputDriver
     void init(void) override;
     void readKeyboard(uint8_t address, lv_indev_t *indev, lv_indev_data_t *data) override;
     virtual ~TLoraPagerKeyboardInputDriver(void) {}
+
 };
 
 class TDeckProKeyboardInputDriver : public TCA8418KeyboardInputDriver
@@ -97,3 +122,4 @@ class MPR121KeyboardInputDriver : public I2CKeyboardInputDriver
     void readKeyboard(uint8_t address, lv_indev_t *indev, lv_indev_data_t *data) override;
     virtual ~MPR121KeyboardInputDriver(void) {}
 };
+

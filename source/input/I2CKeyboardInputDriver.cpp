@@ -5,8 +5,52 @@
 #include <Wire.h>
 
 #include "indev/lv_indev_private.h"
+#include "widgets/textarea/lv_textarea.h"
+#include "graphics/driver/DisplayDriver.h"
+
+// TCA8418 register definitions
+#define TCA8418_REG_CFG             0x01
+#define TCA8418_REG_INT_STAT        0x02
+#define TCA8418_REG_KEY_LCK_EC      0x03
+#define TCA8418_REG_KEY_EVENT_A     0x04
+#define TCA8418_REG_GPIO_INT_EN_1   0x1A
+#define TCA8418_REG_GPIO_INT_EN_2   0x1B
+#define TCA8418_REG_GPIO_INT_EN_3   0x1C
+#define TCA8418_REG_KP_GPIO_1       0x1D
+#define TCA8418_REG_KP_GPIO_2       0x1E
+#define TCA8418_REG_KP_GPIO_3       0x1F
+#define TCA8418_REG_GPI_EM_1        0x20
+#define TCA8418_REG_GPI_EM_2        0x21
+#define TCA8418_REG_GPI_EM_3        0x22
+#define TCA8418_REG_GPIO_DIR_1      0x23
+#define TCA8418_REG_GPIO_DIR_2      0x24
+#define TCA8418_REG_GPIO_DIR_3      0x25
+#define TCA8418_REG_GPIO_INT_LVL_1  0x26
+#define TCA8418_REG_GPIO_INT_LVL_2  0x27
+#define TCA8418_REG_GPIO_INT_LVL_3  0x28
+#define TCA8418_REG_DEBOUNCE_DIS_1  0x29
+#define TCA8418_REG_DEBOUNCE_DIS_2  0x2A
+#define TCA8418_REG_DEBOUNCE_DIS_3  0x2B
+
+static void tca8418WriteReg(uint8_t address, uint8_t reg, uint8_t value)
+{
+    Wire.beginTransmission(address);
+    Wire.write(reg);
+    Wire.write(value);
+    Wire.endTransmission();
+}
+
+static uint8_t tca8418ReadReg(uint8_t address, uint8_t reg)
+{
+    Wire.beginTransmission(address);
+    Wire.write(reg);
+    Wire.endTransmission();
+    Wire.requestFrom(address, (uint8_t)1);
+    return Wire.available() ? Wire.read() : 0;
+}
 
 I2CKeyboardInputDriver::KeyboardList I2CKeyboardInputDriver::i2cKeyboardList;
+NavigationCallback I2CKeyboardInputDriver::navigateHomeCallback = nullptr;
 
 I2CKeyboardInputDriver::I2CKeyboardInputDriver(void) {}
 
@@ -30,6 +74,60 @@ bool I2CKeyboardInputDriver::registerI2CKeyboard(I2CKeyboardInputDriver *driver,
     ILOG_INFO("Registered I2C keyboard: %s at address 0x%02X", name.c_str(), address);
     return true;
 }
+
+void I2CKeyboardInputDriver::initKeyboardBacklight(uint8_t pin, uint8_t channel)
+{
+#ifndef ARCH_PORTDUINO
+    kbBlPin = pin;
+    kbBlChannel = channel;
+    kbBlBrightness = 0;
+    kbBlSavedBrightness = 0;
+    pinMode(kbBlPin, OUTPUT);
+    digitalWrite(kbBlPin, LOW);
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    ledcAttach(kbBlPin, 1000, 8);
+#else
+    ledcSetup(kbBlChannel, 1000, 8);
+    ledcAttachPin(kbBlPin, kbBlChannel);
+#endif
+#endif
+}
+
+void I2CKeyboardInputDriver::setKeyboardBacklight(uint8_t brightness)
+{
+#ifndef ARCH_PORTDUINO
+    if (kbBlPin == 0)
+        return;
+    kbBlBrightness = brightness;
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+    ledcWrite(kbBlPin, kbBlBrightness);
+#else
+    ledcWrite(kbBlChannel, kbBlBrightness);
+#endif
+    ILOG_DEBUG("KB backlight: %d", kbBlBrightness);
+#endif
+}
+
+void I2CKeyboardInputDriver::initBacklightSteps(const uint8_t *steps, uint8_t count)
+{
+    kbBlSteps = steps;
+    kbBlStepCount = count;
+    // Clamp to last step rather than wrapping to 0, so a persisted index that
+    // exceeds the current step count never leaves the backlight unexpectedly off.
+    if (count > 0 && kbBlStep >= count)
+        kbBlStep = count - 1;
+    if (count > 0)
+        setKeyboardBacklight(kbBlSteps[kbBlStep]);
+}
+
+void I2CKeyboardInputDriver::stepBacklight()
+{
+    if (!kbBlSteps || kbBlStepCount == 0)
+        return;
+    kbBlStep = (kbBlStep + 1) % kbBlStepCount;
+    setKeyboardBacklight(kbBlSteps[kbBlStep]);
+}
+
 
 void I2CKeyboardInputDriver::keyboard_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
