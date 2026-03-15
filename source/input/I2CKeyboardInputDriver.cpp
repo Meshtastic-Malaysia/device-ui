@@ -238,6 +238,8 @@ void TLoraPagerKeyboardInputDriver::init(void)
 {
     driver = this; // register as the InputDriver singleton for indev management
     initKeyboardBacklight(KB_BL_PIN);
+    static const uint8_t steps[] = {0, 40, 127, 255};
+    initBacklightSteps(steps, sizeof(steps));
     TCA8418KeyboardInputDriver::init();
 
     // Initialise TCA8418 hardware so it populates the key-event FIFO.
@@ -353,10 +355,7 @@ void TLoraPagerKeyboardInputDriver::readKeyboard(uint8_t address, lv_indev_t *in
         DisplayDriver::requestWake();
 
     if (keyChar == TLORA_BL_TOGGLE_KEY) {
-        static const uint8_t kbBlSteps[] = {0, 40, 127, 255};
-        static const uint8_t kbBlStepCount = sizeof(kbBlSteps) / sizeof(kbBlSteps[0]);
-        kbBlStep = (kbBlStep + 1) % kbBlStepCount;
-        setKeyboardBacklight(kbBlSteps[kbBlStep]);
+        stepBacklight();
         return;
     }
 

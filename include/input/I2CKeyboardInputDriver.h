@@ -88,7 +88,6 @@ class TLoraPagerKeyboardInputDriver : public TCA8418KeyboardInputDriver
 
 private:
     uint8_t kbAddress = 0;
-    uint8_t kbBlStep = 0;
 };
 
 class TDeckProKeyboardInputDriver : public TCA8418KeyboardInputDriver
