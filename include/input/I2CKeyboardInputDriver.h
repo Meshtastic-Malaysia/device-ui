@@ -1,6 +1,7 @@
 #pragma once
 
 #include "input/InputDriver.h"
+#include "input/ScreenSleepObserver.h"
 #include <list>
 #include <memory>
 #include <string>
@@ -27,7 +28,7 @@ class I2CKeyboardInputDriver : public InputDriver
     static KeyboardList &getI2CKeyboardList(void) { return i2cKeyboardList; }
 
     // Navigation callback for backspace when not in a text field
-    static void setNavigateHomeCallback(NavigationCallback cb) { navigateHomeCallback = cb; }
+    static void setNavigateBackCallback(NavigationCallback cb) { navigateBackCallback = cb; }
 
   protected:
     bool registerI2CKeyboard(I2CKeyboardInputDriver *driver, std::string name, uint8_t address);
@@ -43,7 +44,7 @@ class I2CKeyboardInputDriver : public InputDriver
     uint8_t kbBlBrightness = 0;
     uint8_t kbBlSavedBrightness = 0;
 
-    static NavigationCallback navigateHomeCallback;
+    static NavigationCallback navigateBackCallback;
 
   private:
     static void keyboard_read(lv_indev_t *indev, lv_indev_data_t *data);
@@ -78,15 +79,17 @@ class TCA8418KeyboardInputDriver : public I2CKeyboardInputDriver
     TCA8418KeyboardInputDriver(void) {}
 };
 
-class TLoraPagerKeyboardInputDriver : public TCA8418KeyboardInputDriver
+class TLoraPagerKeyboardInputDriver : public TCA8418KeyboardInputDriver, public ScreenSleepObserver
 {
   public:
     TLoraPagerKeyboardInputDriver(uint8_t address);
     void init(void) override;
     void readKeyboard(uint8_t address, lv_indev_t *indev, lv_indev_data_t *data) override;
+    void onScreenSleep(void) override;
+    void applyBrightnessProgress(float progress, bool fadingIn) override;
     virtual ~TLoraPagerKeyboardInputDriver(void) {}
 
-private:
+  private:
     uint8_t kbAddress = 0;
 };
 

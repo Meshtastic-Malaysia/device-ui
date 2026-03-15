@@ -30,7 +30,7 @@ TFTView_480x222::TFTView_480x222(const DisplayDriverConfig *cfg, DisplayDriver *
 void TFTView_480x222::init_screens(void)
 {
     TFTView_320x240::init_screens();
-    I2CKeyboardInputDriver::setNavigateHomeCallback([]() {
+    I2CKeyboardInputDriver::setNavigateBackCallback([]() {
         auto *v = TFTView_320x240::gui;
         if (v && objects.home_button) {
             v->ui_set_active(objects.home_button, objects.home_panel, objects.top_panel);

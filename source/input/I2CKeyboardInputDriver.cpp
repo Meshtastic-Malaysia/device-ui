@@ -50,7 +50,7 @@ static uint8_t tca8418ReadReg(uint8_t address, uint8_t reg)
 }
 
 I2CKeyboardInputDriver::KeyboardList I2CKeyboardInputDriver::i2cKeyboardList;
-NavigationCallback I2CKeyboardInputDriver::navigateHomeCallback = nullptr;
+NavigationCallback I2CKeyboardInputDriver::navigateBackCallback = nullptr;
 
 I2CKeyboardInputDriver::I2CKeyboardInputDriver(void) {}
 
@@ -126,6 +126,23 @@ void I2CKeyboardInputDriver::stepBacklight()
         return;
     kbBlStep = (kbBlStep + 1) % kbBlStepCount;
     setKeyboardBacklight(kbBlSteps[kbBlStep]);
+}
+
+void TLoraPagerKeyboardInputDriver::onScreenSleep(void)
+{
+    // Save brightness at the start of the display dim; the parallel fade is driven
+    // frame-by-frame via applyBrightnessProgress() so no instant cut is needed here.
+    kbBlSavedBrightness = kbBlBrightness;
+}
+
+void TLoraPagerKeyboardInputDriver::applyBrightnessProgress(float progress, bool fadingIn)
+{
+    // Mirror the display sinusoidal curve using the same progress value supplied
+    // by LGFXDriver, so both backlights animate in perfect sync.
+    if (fadingIn)
+        setKeyboardBacklight((uint8_t)(kbBlSavedBrightness * sinf(progress * 1.5707963f)));
+    else
+        setKeyboardBacklight((uint8_t)(kbBlSavedBrightness * cosf(progress * 1.5707963f)));
 }
 
 void I2CKeyboardInputDriver::keyboard_read(lv_indev_t *indev, lv_indev_data_t *data)
@@ -225,8 +242,12 @@ void TCA8418KeyboardInputDriver::readKeyboard(uint8_t address, lv_indev_t *indev
 
 #define TLORA_BL_TOGGLE_KEY 0x01
 
-static bool tloraShiftHeld = false;
-static bool tloraSymHeld   = false;
+static bool     tloraShiftHeld      = false;
+static bool     tloraSymHeld        = false;
+static char     tloraHeldKey        = 0;    // which kActionKey is currently held (0 = none)
+static uint32_t tloraHoldStartTime  = 0;
+
+#define TLORA_SPACE_SLEEP_MS 3000
 
 TLoraPagerKeyboardInputDriver::TLoraPagerKeyboardInputDriver(uint8_t address) : TCA8418KeyboardInputDriver()
 {
@@ -237,6 +258,7 @@ TLoraPagerKeyboardInputDriver::TLoraPagerKeyboardInputDriver(uint8_t address) : 
 void TLoraPagerKeyboardInputDriver::init(void)
 {
     driver = this; // register as the InputDriver singleton for indev management
+    ScreenSleepObserver::setInstance(this); // register keyboard backlight as display sleep observer
     initKeyboardBacklight(KB_BL_PIN);
     static const uint8_t steps[] = {0, 40, 127, 255};
     initBacklightSteps(steps, sizeof(steps));
@@ -301,6 +323,13 @@ void TLoraPagerKeyboardInputDriver::readKeyboard(uint8_t address, lv_indev_t *in
     data->state = LV_INDEV_STATE_RELEASED;
     data->key = 0;
 
+    // Check for action-key hold-to-sleep (space/return/backspace held >= threshold)
+    if (tloraHeldKey && (millis() - tloraHoldStartTime >= TLORA_SPACE_SLEEP_MS)) {
+        tloraHeldKey = 0;
+        ILOG_INFO("T-Pager: key held %dms, requesting screen sleep", TLORA_SPACE_SLEEP_MS);
+        DisplayDriver::requestSleep();
+    }
+
     // Read key count from KEY_LCK_EC register (bits 0-3)
     Wire.beginTransmission(address);
     Wire.write(TCA8418_REG_KEY_LCK_EC);
@@ -342,17 +371,46 @@ void TLoraPagerKeyboardInputDriver::readKeyboard(uint8_t address, lv_indev_t *in
         return;
     }
 
-    if (!pressed)
-        return;
-
     uint8_t modUsed = tloraSymHeld ? 2 : (tloraShiftHeld ? 1 : 0);
     char keyChar = TLoraPagerKeyMap[keyIndex][modUsed];
 
-    // Only Space wakes the display; other keys are ignored while the display
-    // sleeps to prevent inadvertent activation. sym+Space resolves to the
-    // backlight-toggle sentinel rather than ' ', so it does not wake either.
-    if (keyChar == ' ')
-        DisplayDriver::requestWake();
+    // Handle action keys (space/return/backspace): hold-to-sleep; space also wakes.
+    // Special case: space in a textarea with the screen already on must type normally,
+    // but the hold timer still runs so hold-to-sleep remains functional.
+    if (isActionKey(keyChar)) {
+        lv_obj_t *focused = lv_group_get_focused(lv_group_get_default());
+        bool inTextarea = focused && lv_obj_check_type(focused, &lv_textarea_class);
+        if (keyChar == kWakeKey && inTextarea && !DisplayDriver::isScreenSleeping()) {
+            // Start hold timer on press so a 3 s hold still sleeps the display,
+            // but dispatch immediately (fall through) so the space character is typed.
+            // On release, just clear the timer — no re-dispatch needed.
+            if (pressed) {
+                tloraHeldKey       = keyChar;
+                tloraHoldStartTime = millis();
+                // fall through to dispatch space now
+            } else {
+                tloraHeldKey = 0;
+                return;
+            }
+        } else {
+            bool dispatchShortPress = false;
+            if (pressed) {
+                tloraHeldKey       = keyChar;
+                tloraHoldStartTime = millis();
+            } else if (tloraHeldKey == keyChar) {
+                tloraHeldKey = 0;
+                if (keyChar == kWakeKey)
+                    DisplayDriver::requestWake();
+                else
+                    dispatchShortPress = true; // return/backspace: dispatch normally
+            }
+            if (!dispatchShortPress) return;
+            pressed = true; // treat short-release as a press for dispatch below
+        }
+    }
+
+    if (!pressed)
+        return;
 
     if (keyChar == TLORA_BL_TOGGLE_KEY) {
         stepBacklight();
@@ -374,8 +432,8 @@ void TLoraPagerKeyboardInputDriver::readKeyboard(uint8_t address, lv_indev_t *in
         } else if (focused && lv_obj_get_class(focused) == &lv_obj_class) {
             // Plain lv_obj focused (e.g. an overlay panel) — send ESC so it can handle dismissal
             data->key = LV_KEY_ESC;
-        } else if (navigateHomeCallback) {
-            navigateHomeCallback();
+        } else if (navigateBackCallback) {
+            navigateBackCallback();
             data->state = LV_INDEV_STATE_RELEASED;
             return;
         } else {

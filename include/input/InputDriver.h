@@ -4,6 +4,26 @@
 #include <string>
 #include <vector>
 
+// Keys shared between hold-to-sleep and dialog dismissal.
+// kWakeKey is the only key that wakes the display; kActionKeys are all keys
+// that can trigger hold-to-sleep and dismiss dialogs.
+static constexpr char kWakeKey       = ' ';
+static constexpr char kActionKeys[]  = {' ', 0x0D, 0x08}; // space, return, backspace
+
+static inline bool isActionKey(char c)
+{
+    for (char k : kActionKeys)
+        if (c == k) return true;
+    return false;
+}
+
+// LVGL-level equivalent used by the view layer for dialog dismissal.
+// Includes LV_KEY_ESC to handle sym+backspace on physical keyboards.
+static inline bool isActionLvKey(uint32_t key)
+{
+    return key == ' ' || key == LV_KEY_ENTER || key == LV_KEY_BACKSPACE || key == LV_KEY_ESC;
+}
+
 /**
  * @brief This base class merges all input devices of its children
  *        into one "set". It allows to create several instances of different(!)

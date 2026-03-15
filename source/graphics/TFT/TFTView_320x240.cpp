@@ -143,8 +143,7 @@ static bool isDismissEvent(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_CLICKED) return true;
     if (code == LV_EVENT_KEY) {
-        uint32_t key = lv_event_get_key(e);
-        return key == LV_KEY_ESC || key == LV_KEY_BACKSPACE;
+        return isActionLvKey(lv_event_get_key(e));
     }
     return false;
 }
@@ -1302,7 +1301,7 @@ void TFTView_320x240::ui_event_MsgPopupButton(lv_event_t *e)
     } else { // msg_popup_button: ESC/Backspace dismisses, Enter/click navigates
         if (lv_event_get_code(e) == LV_EVENT_KEY) {
             uint32_t key = lv_event_get_key(e);
-            if (key == LV_KEY_ESC || key == LV_KEY_BACKSPACE) {
+            if (isActionLvKey(key) && key != LV_KEY_ENTER) {
                 THIS->hideMessagePopup();
                 return;
             }
