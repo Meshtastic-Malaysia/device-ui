@@ -209,6 +209,46 @@ Graphics using <a href="https://lvgl.io/" target="_blank">LVGL</a> library
     - [ ] Continue work on eez-studio UI screens
     - [ ] Refactoring of common code with 320x240 view into base class
 
+### :pager: T-Lora Pager
+
+    - [x] Firmware project integration
+    - [x] T-Lora Pager UI
+      - [x] 480x222 view (subclass of 320x240 view; identical widget names, no logic overrides needed)
+      - [x] ST7796 display driver via LGFX
+      - [x] Offline map support (inherited from 320x240 view)
+      - [x] Focus indicators: ButtonPanel right-side border, map arrow opacity change
+    - [x] TCA8418 I2C keyboard input driver
+      - [x] TCA8418 hardware initialisation (GPIO inputs, GPI event/interrupt enable, 4×10 matrix, FIFO flush, KE_IEN)
+      - [x] 4×10 key matrix reading via FIFO
+      - [x] Held shift / sym modifier keys; modSymActive mirrors live sym hold state for encoder sym+scroll
+      - [x] Enter as LVGL select, Tab (shift+Enter) as focus-next, ESC (sym+Backspace)
+      - [x] Backspace outside text field invokes navigation callback (navigates to home button) *
+      - [x] Keyboard backlight PWM; sym+Space cycles brightness steps (0 / 40 / 127 / 255)
+      - [x] Backlight automatically saved/restored across display sleep/wake *
+      - [x] Space short-press wakes display; hold any action key (Space / Enter / Backspace) 3 s to sleep
+      - [x] Keys other than Space ignored while display is sleeping to prevent inadvertent activation
+    - [x] Rotary encoder input driver (mverch67 RotaryEncoder library) *
+      - [x] ISR-based quadrature decoding (no missed steps at high speed) *
+      - [x] Encoder button as LVGL enter/select *
+      - [x] setSymScrollCallback() hook for sym+encoder scroll gestures *
+      - [x] Sym+scroll scrolls active message container (clamped to content bounds)
+    - [x] Encoder/keyboard focus navigation
+      - [x] Map nav/zoom buttons added to encoder group (GPS lock, zoom in/out, arrow up/right/down/left)
+      - [x] Overlay panels (alerts, QR codes, message notifications) auto-focused and dismissible via any action key (Space, Enter, Backspace, ESC) *
+    - [x] Display sleep/wake with sinusoidal brightness fading *
+      - [x] Slow fade-to-off on inactivity timeout (10 s); fast fade on manual sleep request (1 s) *
+      - [x] Sinusoidal ease-in on wake; mid-fade cancel joins the wake curve smoothly at current brightness *
+      - [x] Thread-safe requestWake() / requestSleep() on DisplayDriver — safe to call from any task or ISR context *
+      - [x] onScreenSleep() / onScreenWake() virtual hooks on InputDriver; LGFXDriver calls them at every power-save transition *
+      - [x] applyBrightnessProgress(progress, fadingIn) hook; keyboard backlight follows the same sinusoidal curve as the display *
+    - [x] Keyboard backlight infrastructure in I2CKeyboardInputDriver base class *
+      - [x] initKeyboardBacklight(pin, channel) PWM setup (IDF 5+ and legacy toolchain) *
+      - [x] initBacklightSteps(steps, count) / stepBacklight() for multi-level brightness cycling *
+      - [x] Sinusoidal fade-out/in concurrent with the display dim/wake animation, driven by the same progress value *
+    - [x] Fix: double-registration of TCA8418-based keyboard driver subclasses *
+
+    > \* Generic feature not specific to the T-Lora Pager — applicable to other devices and driver subclasses.
+
 ### OLED
 
     - [ ] Provide demo for OLED 128x64 screen
